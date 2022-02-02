@@ -187,9 +187,19 @@ data_prep_ver6 %>%
   count(quarterly) %>% 
   filter(n >= 30)
 
+cbPalette <- c("#999999", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+
+
 data_prep_ver6 %>%
   count(quarterly) %>%
-  ggplot(aes(x = quarterly, y = n))
+  ggplot(aes(x = quarterly, y = n, fill = quarterly)) +
+  ggplot2::geom_col() +
+  ggtitle("분기별 기사수 빈도표") + 
+  xlab("분기") +
+  ylab("기사수") +
+  theme_bw(base_family = 'AppleGothic') +
+  theme(legend.position = "none") +
+  geom_label(aes(label = n), color = "white")
 
 
 # 오픈문항 처리 ---------------------------------------------
@@ -259,20 +269,114 @@ open_word_prep %>%
            str_replace_all("중간소득계층", "중위소득층")) -> open_word_prep2
 
 open_word_prep2 %>% 
-  filter(!words %>% str_detect("좋겠")) -> open_word_prep3
+  filter(!words %>% str_detect("좋겠|습니")) %>% 
+  filter(!words %>% str_detect("해주|하기|하지|하게|들이|해서|사람들|이상")) -> open_word_prep3
 
-open_word_prep2 %>% 
+open_word_prep3 %>% 
   count(words) %>% 
   arrange(desc(n)) %>% 
   as.data.frame()
 
 open_word_prep3 %>% 
   count(words) %>% 
+  filter(n > 2) %>% 
   arrange(desc(n)) %>% 
   mutate(words = reorder(words, n)) %>%
   slice_max(n, n = 30,  with_ties = F) %>% 
-  ggplot(aes(x = fct_reorder(words, n), y = n)) +
+  write_excel_csv("word_freq.csv")
+
+open_word_prep3 %>% 
+  count(words) %>% 
+  filter(n > 2) %>% 
+  arrange(desc(n)) %>% 
+  mutate(words = reorder(words, n)) %>%
+  slice_max(n, n = 30,  with_ties = F) %>% 
+  ggplot(aes(x = fct_reorder(words, n), y = n, fill = words)) +
+  theme_gray(base_family = 'AppleGothic') +
+  theme(legend.position = "none") +
   geom_col() +
   coord_flip() +
   geom_text(aes(label = n), hjust = 1.5) +
   xlab("") + ylab("")
+
+
+open_word_prep3 %>%
+  widyr::pairwise_count(item = words,
+                        feature = id,
+                        sort = T) %>%
+  filter(n >= 3) %>%
+  as_tbl_graph(directed = F) %>%
+  mutate(
+    cent_dgr = centrality_degree(),
+    cent_btw = centrality_betweenness(),
+    cent_cls = centrality_closeness(),
+    cent_egn = centrality_eigen(),
+    cent_wgt = centrality_pagerank(weights = n)
+  ) -> data_pairs_graph
+  
+data_pairs_graph %>% 
+  ggraph(layout = "fr") +
+  geom_edge_link(aes(edge_alpha = n,
+                     edge_width = n),
+                 edge_color = "lightgray",
+                 show.legend = F) +
+  geom_node_point(aes(size = cent_wgt)) +
+  geom_node_text(aes(label = name), 
+                 repel = T,
+                 point.padding = unit(0.2, "lines"), family = 'AppleGothic') +
+  theme_void() +
+  theme(legend.position = "none")
+
+data_pairs_graph %>% 
+  as.data.frame() %>% 
+  write_excel_csv("data_network.csv")
+
+
+# 스크립트 ------------------------------------------------
+
+
+# 1. 데이터 불러오기 -----------------------------------------
+
+readxl::read_xlsx("script.xlsx") -> data2
+data2 %>% 
+  mutate(
+    sector = ifelse(actor %in% c("유정현", "한성민", "김주상", "한민진"), "m", NA)
+  ) -> data2_prep1
+data2_prep1 %>% 
+  write_excel_csv("script.csv")
+
+
+# 1.1. 데이터 엑셀에서 처리후 다시 불러오기 ---------------------------
+
+read_csv("script_prep.csv") -> data2_prep2
+
+
+# 2.1. 데이터 확인 -----------------------------------------
+
+# 섹터별 데이터 수 확인
+data2_prep2 %>%
+  filter(!sector == "m") %>%
+  select(text_prep) %>%
+  unnest_tokens(
+    input = text_prep,
+    output = words,
+    token = extractNoun,
+    drop = F
+  ) %>%
+  select(-text_prep) -> data2_word
+data2_word %>% 
+  filter(words %>% str_detect("[가-힣]")) %>% 
+  filter(str_length(words) >= 2) %>% 
+  count(words) %>% 
+  filter(n > 4) -> data2_word_prep
+
+data2_word_prep %>% 
+  filter(!words %>% 
+           str_detect("사람|때문|하나|해서|정도|들이|월요일|나중|아빠|그걸|거기|하다|생각|다음|가지")) -> data2_word_prep2
+data2_word_prep2 %>% 
+  arrange(desc(n)) %>% 
+  write_excel_csv("word_top30.csv")
+  
+
+wordcloud2::wordcloud2(data = data2_word_prep2,
+                       fontWeight="bold",fontFamily = "나눔고딕")
